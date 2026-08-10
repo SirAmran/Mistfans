@@ -1069,7 +1069,7 @@ const MOCK_SUBMIT_MODE = false;
    2. ORDER API ENDPOINT — insert real backend endpoint here if/when
       moving beyond Netlify Forms (currently unused; form posts natively)
    --------------------------------------------------------------------- */
-const ORDER_API_ENDPOINT = "ORDER_API_ENDPOINT_HERE";
+const ORDER_API_ENDPOINT = "https://script.google.com/macros/s/AKfycbxKkE_ro46G07KbLpYww5auqGWmpxuHB3d7O6IH5PSl2m2gkHmkF8Lz38jBLpJcuKMg/exec";
 
 function nairaFormat(n) {
   return "₦" + n.toLocaleString("en-NG");
@@ -1226,27 +1226,43 @@ async function submitOrder(form) {
   document.getElementById("orderReference").value = reference;
 
   const formData = new FormData(form);
+  const encoded = new URLSearchParams(formData).toString();
 
   try {
     if (MOCK_SUBMIT_MODE) {
-      // DEV MODE — simulates a network call. Replace with real submission
-      // (e.g. Netlify's native form POST, or fetch(ORDER_API_ENDPOINT, ...))
-      // before going live if bypassing Netlify's native form handling.
       await new Promise(resolve => setTimeout(resolve, 900));
-      trackEvent("Lead", { content_name: PRODUCT.name });
-      trackEvent("Purchase", { content_name: PRODUCT.name, currency: "NGN" });
-      showOrderSuccess(form, reference);
     } else {
-      const response = await fetch(form.action || window.location.pathname, {
+      /*
+       * PRIMARY: send directly to Google Apps Script.
+       * no-cors is intentional: Apps Script Web Apps may not expose a
+       * browser-readable CORS response, but the POST itself is still sent.
+       */
+      const appsScriptRequest = fetch(ORDER_API_ENDPOINT, {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams(formData).toString()
+        mode: "no-cors",
+        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+        body: encoded,
+        keepalive: true
       });
-      if (!response.ok) throw new Error("Submission failed");
-      trackEvent("Lead", { content_name: PRODUCT.name });
-      trackEvent("Purchase", { content_name: PRODUCT.name, currency: "NGN" });
-      showOrderSuccess(form, reference);
+
+      /*
+       * BACKUP: also submit the same order to Netlify Forms.
+       * This keeps Netlify's native form storage/notifications available
+       * even though we have removed the Netlify → Apps Script webhook.
+       */
+      const netlifyRequest = fetch(window.location.pathname, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+        body: encoded,
+        keepalive: true
+      });
+
+      await Promise.allSettled([appsScriptRequest, netlifyRequest]);
     }
+
+    trackEvent("Lead", { content_name: PRODUCT.name });
+    trackEvent("Purchase", { content_name: PRODUCT.name, currency: "NGN" });
+    showOrderSuccess(form, reference);
   } catch (err) {
     setStatus("Something went wrong. Please try again or WhatsApp us.", "error");
   } finally {
