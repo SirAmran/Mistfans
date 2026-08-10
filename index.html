@@ -1224,46 +1224,32 @@ async function submitOrder(form) {
 
   const reference = generateOrderReference();
   document.getElementById("orderReference").value = reference;
-
   const formData = new FormData(form);
-  const encoded = new URLSearchParams(formData).toString();
+
+  const selectedQty = form.querySelector("#package").value;
+  const selectedTier = PRODUCT.tiers.find(tier => String(tier.qty) === selectedQty);
+  if (selectedTier) formData.set("package", `${selectedTier.label} — ${nairaFormat(selectedTier.price)}`);
 
   try {
     if (MOCK_SUBMIT_MODE) {
       await new Promise(resolve => setTimeout(resolve, 900));
     } else {
-      /*
-       * PRIMARY: send directly to Google Apps Script.
-       * no-cors is intentional: Apps Script Web Apps may not expose a
-       * browser-readable CORS response, but the POST itself is still sent.
-       */
-      const appsScriptRequest = fetch(ORDER_API_ENDPOINT, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
-        body: encoded,
-        keepalive: true
-      });
+      const appsScriptData = new URLSearchParams();
+      for (const [key, value] of formData.entries()) appsScriptData.append(key, value);
+      await fetch(ORDER_API_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: appsScriptData.toString(), mode: "no-cors" });
 
-      /*
-       * BACKUP: also submit the same order to Netlify Forms.
-       * This keeps Netlify's native form storage/notifications available
-       * even though we have removed the Netlify → Apps Script webhook.
-       */
-      const netlifyRequest = fetch(window.location.pathname, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
-        body: encoded,
-        keepalive: true
-      });
-
-      await Promise.allSettled([appsScriptRequest, netlifyRequest]);
+      const netlifyData = new URLSearchParams();
+      for (const [key, value] of formData.entries()) netlifyData.append(key, value);
+      netlifyData.append("form-name", "mistfan-order");
+      const netlifyResponse = await fetch("/", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: netlifyData.toString() });
+      if (!netlifyResponse.ok) throw new Error("Backup submission failed.");
     }
 
     trackEvent("Lead", { content_name: PRODUCT.name });
-    trackEvent("Purchase", { content_name: PRODUCT.name, currency: "NGN" });
+    trackEvent("Purchase", { content_name: PRODUCT.name, currency: "NGN", value: selectedTier ? selectedTier.price : undefined });
     showOrderSuccess(form, reference);
   } catch (err) {
+    console.error("Order submission error:", err);
     setStatus("Something went wrong. Please try again or WhatsApp us.", "error");
   } finally {
     submitBtn.disabled = false;
